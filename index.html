@@ -167,7 +167,7 @@
     /* ── Summary Cards ── */
     .cards {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
+      grid-template-columns: repeat(3, 1fr);
       gap: 14px;
       margin-bottom: 20px;
     }
@@ -195,6 +195,8 @@
     .card--caution .value   { color: var(--caution); }
     .card--positive::before { background: linear-gradient(90deg, var(--positive), transparent); }
     .card--positive .value  { color: var(--positive); }
+    .card--negative::before { background: linear-gradient(90deg, var(--negative), transparent); }
+    .card--negative .value  { color: var(--negative); }
     .card--accent::before   { background: linear-gradient(90deg, var(--accent), transparent); }
     .card--accent .value    { color: var(--accent); }
 
@@ -270,7 +272,7 @@
     <h1>여주시 농촌공간계획 성과지표</h1>
     <span class="badge" id="badgeCount">8개 읍면</span>
   </div>
-  <span class="header-sub">읍면별 인구 / 고령화율 / 사업체 현황</span>
+  <span class="header-sub">읍면별 인구 / 고령화율 / 사업체 / 빈집 / 의료시설</span>
 </header>
 
 <main>
@@ -300,6 +302,8 @@
               <th class="num">인구 (명)</th>
               <th class="num">고령화율 (%)</th>
               <th class="num">사업체 수</th>
+              <th class="num">빈집 수</th>
+              <th class="num">의료시설</th>
             </tr>
           </thead>
           <tbody></tbody>
@@ -320,10 +324,22 @@
     </div>
   </div>
 
-  <!-- Row 3: Business Chart (full width) -->
+  <!-- Row 3: Business + Vacant House -->
+  <div class="grid-2">
+    <div class="panel chart-wrap">
+      <h2>읍면별 사업체 수</h2>
+      <canvas id="bizChart"></canvas>
+    </div>
+    <div class="panel chart-wrap">
+      <h2>읍면별 빈집 수</h2>
+      <canvas id="vacantChart"></canvas>
+    </div>
+  </div>
+
+  <!-- Row 4: Medical Facility (full width) -->
   <div class="panel chart-wrap full-row">
-    <h2>읍면별 사업체 수</h2>
-    <canvas id="bizChart" style="max-height:260px"></canvas>
+    <h2>읍면별 의료시설 수</h2>
+    <canvas id="medicalChart" style="max-height:260px"></canvas>
   </div>
 </main>
 
@@ -365,6 +381,8 @@ async function loadData() {
     population: Number(r.population),
     elderlyRatio: Number(r.elderly_ratio),
     business: Number(r.business_count),
+    vacantHouse: Number(r.vacant_house),
+    medical: Number(r.medical_facility),
     lat: Number(r.lat),
     lng: Number(r.lng),
   }));
@@ -448,7 +466,7 @@ function initMap() {
 // ── Charts ──
 Chart.defaults.font.family = 'Pretendard, Malgun Gothic, sans-serif';
 Chart.defaults.color = C.sub;
-let popChart, elderlyChart, bizChart;
+let popChart, elderlyChart, bizChart, vacantChart, medicalChart;
 
 function elderlyColor(ratio) {
   return ratio >= 30 ? C.negative : ratio >= 25 ? C.caution : C.primary;
@@ -462,11 +480,15 @@ function renderAll() {
   const totalPop = filtered.reduce((s, d) => s + d.population, 0);
   const avgElderly = (filtered.reduce((s, d) => s + d.elderlyRatio, 0) / filtered.length).toFixed(1);
   const totalBiz = filtered.reduce((s, d) => s + d.business, 0);
+  const totalVacant = filtered.reduce((s, d) => s + d.vacantHouse, 0);
+  const totalMedical = filtered.reduce((s, d) => s + d.medical, 0);
 
   document.getElementById('cards').innerHTML = [
     { label: '총 인구',      value: totalPop.toLocaleString(), unit: '명', cls: 'card--primary' },
     { label: '평균 고령화율', value: avgElderly,                unit: '%',  cls: 'card--caution' },
     { label: '총 사업체 수',  value: totalBiz.toLocaleString(), unit: '개', cls: 'card--positive' },
+    { label: '총 빈집 수',   value: totalVacant.toLocaleString(), unit: '채', cls: 'card--negative' },
+    { label: '의료시설 수',  value: totalMedical.toLocaleString(), unit: '개소', cls: 'card--accent' },
     { label: '선택 읍면',     value: filtered.length,           unit: '개', cls: 'card--accent' },
   ].map(c => `
     <div class="card ${c.cls}">
@@ -493,7 +515,9 @@ function renderAll() {
         <div style="margin-top:8px;font-size:12px;color:#A0A8B8;line-height:1.8">
           인구 <b style="color:#E2E6EF">${d.population.toLocaleString()}명</b><br>
           고령화율 <b style="color:${col}">${d.elderlyRatio}%</b><br>
-          사업체 <b style="color:${C.positive}">${d.business.toLocaleString()}개</b>
+          사업체 <b style="color:${C.positive}">${d.business.toLocaleString()}개</b><br>
+          빈집 <b style="color:${C.negative}">${d.vacantHouse.toLocaleString()}채</b><br>
+          의료시설 <b style="color:${C.accent}">${d.medical}개소</b>
         </div>
       </div>
     `, { className: 'dark-popup' });
@@ -512,6 +536,8 @@ function renderAll() {
   if (popChart) popChart.destroy();
   if (elderlyChart) elderlyChart.destroy();
   if (bizChart) bizChart.destroy();
+  if (vacantChart) vacantChart.destroy();
+  if (medicalChart) medicalChart.destroy();
 
   const chartOpts = {
     responsive: true,
@@ -553,6 +579,25 @@ function renderAll() {
     options: { ...chartOpts, scales: { ...scaleBase, y: { ...scaleBase.y, ticks: { ...scaleBase.y.ticks, callback: v => v.toLocaleString() } } } }
   });
 
+  const vacantSorted = [...filtered].sort((a, b) => b.vacantHouse - a.vacantHouse);
+  vacantChart = new Chart(document.getElementById('vacantChart'), {
+    type: 'bar',
+    data: {
+      labels: vacantSorted.map(d => d.name),
+      datasets: [{ data: vacantSorted.map(d => d.vacantHouse), backgroundColor: C.negative, borderRadius: 6, hoverBackgroundColor: '#F08080' }]
+    },
+    options: { ...chartOpts, scales: { ...scaleBase, y: { ...scaleBase.y, ticks: { ...scaleBase.y.ticks, callback: v => v.toLocaleString() } } } }
+  });
+
+  medicalChart = new Chart(document.getElementById('medicalChart'), {
+    type: 'bar',
+    data: {
+      labels: sorted.map(d => d.name),
+      datasets: [{ data: sorted.map(d => d.medical), backgroundColor: C.accent, borderRadius: 6, hoverBackgroundColor: '#B5A8ED' }]
+    },
+    options: { ...chartOpts, scales: { ...scaleBase, y: { ...scaleBase.y, ticks: { ...scaleBase.y.ticks, callback: v => v.toLocaleString() } } } }
+  });
+
   // Table
   const tbody = document.querySelector('#dataTable tbody');
   tbody.innerHTML = '';
@@ -563,6 +608,8 @@ function renderAll() {
       <td class="num">${d.population.toLocaleString()}</td>
       <td class="num">${d.elderlyRatio}</td>
       <td class="num">${d.business.toLocaleString()}</td>
+      <td class="num">${d.vacantHouse.toLocaleString()}</td>
+      <td class="num">${d.medical}</td>
     `;
     tbody.appendChild(tr);
   });
